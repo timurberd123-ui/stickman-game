@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Stickman: Difficulty Levels</title>
+    <style>
+        html, body {
+            margin: 0; padding: 0;
+            width: 100%; height: 100%;
+            overflow: hidden;
+            background: #050505;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #game-container { position: relative; }
+        canvas { 
+            background: #000; 
+            border: 2px solid #333; 
+            box-shadow: 0 0 50px rgba(0, 255, 255, 0.15);
+        }
+        #death-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+            background: rgba(0, 0, 0, 0.9); color: #ff4444; z-index: 10;
+            font-family: 'Segoe UI', sans-serif;
+        }
+        h1 { font-size: 48px; text-shadow: 0 0 20px red; }
+        button {
+            padding: 15px 40px; font-size: 24px; background: transparent;
+            color: #0ff; border: 2px solid #0ff; cursor: pointer; font-weight: bold;
+        }
+        button:hover { background: #0ff; color: #000; box-shadow: 0 0 20px #0ff; }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="death-screen">
+            <h1>ВЫ ПРОИГРАЛИ!</h1>
+            <button onclick="resetGame()">ЗАНОВО</button>
+        </div>
+        <canvas id="c" width="600" height="600"></canvas>
+    </div>
+
+<script>
+const c = document.getElementById("c");
+const ctx = c.getContext("2d");
+const deathScreen = document.getElementById("death-screen");
+
+// --- ЗВУКОВАЯ СИСТЕМА ---
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playSound(freq, type, duration, vol) {
+    try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+    } catch(e) {}
+}
+
+let musicStarted = false;
+function startMusic() {
+    if (musicStarted) return;
+    musicStarted = true;
+    setInterval(() => {
+        if (!isGameOver) {
+            const notes = [261.63, 329.63, 392.00, 523.25];
+            const note = notes[Math.floor(Math.random() * notes.length)];
+            playSound(note, 'triangle', 1.5, 0.04);
+        }
+    }, 1000);
+}
+
+let player, bullets, enemies, items, particles, score, hp, isGameOver;
+let level, levelUpTimer, enemySpawnRate;
+let keys = {};
+
+function resetGame() {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    startMusic();
+    player = { x: 300, y: 500, w: 20, h: 40, sp: 3.8 }; 
+    bullets = []; enemies = []; items = []; particles = [];
+    score = 0; hp = 5; isGameOver = false;
+    level = 1; levelUpTimer = 0;
+    enemySpawnRate = 1000; // Начальный интервал появления врагов (мс)
+    deathScreen.style.display = "none";
+    startEnemySpawner();
+}
+
+// Умный спавнер, который ускоряется
+let spawner;
+function startEnemySpawner() {
+    if(spawner) clearInterval(spawner);
+    spawner = setInterval(() => {
+        if (!isGameOver) {
+            enemies.push({ 
+                x: Math.random()*570, 
+                y: -30, 
+                sp: 1.8 + (level * 0.4) + Math.random() // Враги ускоряются с уровнем
+            });
+        }
+    }, enemySpawnRate);
+}
+
+addEventListener("keydown", e => keys[e.code] = true);
+addEventListener("keyup", e => keys[e.code] = false);
+document.body.addEventListener("mousedown", () => { if(!musicStarted) resetGame(); }, {once: true});
+
+function createParticles(x, y, color) {
+    for (let i = 0; i < 10; i++) {
+        particles.push({
+            x, y, vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 0.5) * 8,
+            life: 1, color
+        });
+    }
+}
+
+// Спавн бонусов (фиксированный)
+setInterval(() => { if (!isGameOver) items.push({ x: Math.random()*570, y: -20, sp: 1.8 }); }, 5000);
+
+function drawStickman(x, y, color) {
+    ctx.strokeStyle = color; ctx.lineWidth = 3;
+    ctx.shadowBlur = 15; ctx.shadowColor = color;
+    ctx.beginPath();
+    ctx.arc(x + 10, y, 7, 0, Math.PI * 2); 
+    ctx.moveTo(x + 10, y + 7); ctx.lineTo(x + 10, y + 25);
+    ctx.moveTo(x + 10, y + 12); ctx.lineTo(x - 5, y + 22);
+    ctx.moveTo(x + 10, y + 12); ctx.lineTo(x + 25, y + 22);
+    ctx.moveTo(x + 10, y + 25); ctx.lineTo(x - 5, y + 40);
+    ctx.moveTo(x + 10, y + 25); ctx.lineTo(x + 25, y + 40);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+}
+
+function update() {
+    if (isGameOver) return;
+
+    // Проверка повышения уровня
+    let newLevel = Math.floor(score / 20) + 1;
+    if (newLevel > level) {
+        level = newLevel;
+        levelUpTimer = 60; // Показать надпись на 60 кадров
+        enemySpawnRate = Math.max(300, 1000 - (level * 80)); // Ускоряем появление
+        startEnemySpawner();
+        playSound(1500, 'sine', 0.5, 0.1); // Звук левел-апа
+    }
+
+    if (keys["KeyA"] || keys["ArrowLeft"]) player.x -= player.sp;
+    if (keys["KeyD"] || keys["ArrowRight"]) player.x += player.sp;
+    if (keys["KeyW"] || keys["ArrowUp"]) player.y -= player.sp;
+    if (keys["KeyS"] || keys["ArrowDown"]) player.y += player.sp;
+
+    player.x = Math.max(0, Math.min(c.width - 20, player.x));
+    player.y = Math.max(0, Math.min(c.height - 40, player.y));
+
+    if (keys["Space"] && (!player.lastShot || Date.now() - player.lastShot > 180)) {
+        bullets.push({ x: player.x + 10, y: player.y - 5 });
+        player.lastShot = Date.now();
+        playSound(800, 'sine', 0.1, 0.02);
+    }
+
+    enemies.forEach((e, i) => {
+        e.y += e.sp;
+        if (Math.abs(e.x - player.x) < 22 && Math.abs(e.y - player.y) < 32) {
+            hp--;
+            playSound(80, 'sawtooth', 0.5, 0.2); 
+            createParticles(player.x, player.y, "red");
+            enemies.splice(i, 1);
+            if (hp <= 0) { isGameOver = true; deathScreen.style.display = "flex"; }
+        }
+        bullets.forEach((b, bi) => {
+            if (Math.abs(b.x - (e.x + 10)) < 22 && Math.abs(b.y - e.y) < 22) {
+                createParticles(e.x + 10, e.y + 10, "#ff4444");
+                enemies.splice(i, 1); bullets.splice(bi, 1);
+                score++;
+            }
+        });
+        if (e.y > c.height) enemies.splice(i, 1);
+    });
+
+    items.forEach((it, i) => {
+        it.y += it.sp;
+        if (Math.abs(it.x - player.x) < 30 && Math.abs(it.y - player.y) < 40) {
+            items.splice(i, 1);
+            score += 10; if (hp < 5) hp++;
+            playSound(1100, 'sine', 0.3, 0.1); 
+            createParticles(player.x, player.y, "#0f0");
+        }
+        if (it.y > c.height) items.splice(i, 1);
+    });
+
+    bullets.forEach((b, i) => { b.y -= 10; if (b.y < 0) bullets.splice(i, 1); });
+    particles.forEach((p, i) => { p.x += p.vx; p.y += p.vy; p.life -= 0.02; if (p.life <= 0) particles.splice(i, 1); });
+    if (levelUpTimer > 0) levelUpTimer--;
+}
+
+function draw() {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+    ctx.fillRect(0, 0, c.width, c.height);
+    
+    particles.forEach(p => {
+        ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, 3, 3);
+    });
+    ctx.globalAlpha = 1;
+
+    if (!isGameOver) drawStickman(player.x, player.y, "#0ff");
+
+    ctx.shadowBlur = 15;
+    ctx.fillStyle = "#ff4444"; ctx.shadowColor = "red";
+    enemies.forEach(e => ctx.fillRect(e.x, e.y, 24, 24));
+    
+    ctx.fillStyle = "#0f0"; ctx.shadowColor = "lime";
+    items.forEach(it => ctx.fillRect(it.x, it.y, 18, 18));
+    
+    ctx.fillStyle = "#ff0"; ctx.shadowColor = "yellow";
+    bullets.forEach(b => ctx.fillRect(b.x, b.y, 4, 12));
+    
+    ctx.shadowBlur = 0; ctx.fillStyle = "white"; ctx.font = "bold 20px Arial";
+    ctx.fillText(`SCORE: ${score}`, 20, 40);
+    ctx.fillText(`HP: ${"❤️".repeat(hp)}`, 20, 75);
+    ctx.fillText(`LEVEL: ${level}`, 500, 40);
+
+    if (levelUpTimer > 0) {
+        ctx.fillStyle = "#0ff";
+        ctx.font = "bold 50px Arial";
+        ctx.shadowBlur = 20; ctx.shadowColor = "#0ff";
+        ctx.fillText("LEVEL UP!", 170, 300);
+        ctx.shadowBlur = 0;
+    }
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+resetGame();
+loop();
+</script>
+</body>
+</html>
